@@ -23,7 +23,7 @@ BOOST_CPPFLAGS = -pthread -I/usr/include/boost
 CC                    = gcc
 CXX                   = g++
 CPPFLAGS              = 
-CXXFLAGS              =  -std=c++11 -g
+CXXFLAGS              =  -std=c++17 -g
 LDFLAGS               = 
 
 ROSE_LIBS = $(ROSE_LIB_DIR)/librose.la
