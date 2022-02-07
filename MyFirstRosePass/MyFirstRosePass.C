@@ -119,11 +119,33 @@ SgInitializedName* is_loop_analyzable(SgNode *for_loop_node, bool debug=true, bo
     return nullptr;
 }
 
+void process_function_body(SgFunctionDefinition *defn) {
+    SgBasicBlock *body = defn->get_body();
+    std::cout << "Found a function" << std::endl;
+    std::cout << "  " << defn->get_declaration()->get_qualified_name() << std::endl;
+    // SageInterface::printAST(func);
+
+    // Get all loops in the current function body
+    Rose_STL_Container<SgNode*> loops = NodeQuery::querySubTree(body, V_SgForStatement); 
+    if (loops.size() == 0) return;
+
+    for (Rose_STL_Container<SgNode*>::iterator iter = loops.begin(); iter != loops.end(); iter++) {
+        SgNode *current_loop = *iter;
+        
+        std::cout << std::endl;
+        std::cout << "Found a loop" << std::endl;
+        is_loop_analyzable(current_loop);
+
+        std::cout << std::endl;
+        // SageInterface::printAST(current_loop);
+    }
+}
+
 }
 
 int main (int argc, char *argv[]) {
     // Build a project
-    SgProject *project = frontend(argc,argv);
+    SgProject *project = frontend(argc, argv);
     ROSE_ASSERT(project);
 
     // For each source file in the project
@@ -147,27 +169,8 @@ int main (int argc, char *argv[]) {
             if (defn == nullptr) continue;
             // Ignore functions in system headers, Can keep them to test robustness
             if (defn->get_file_info()->get_filename() != sageFile->get_file_info()->get_filename()) continue;
-            SgBasicBlock *body = defn->get_body();  
-
-            std::cout << "Found a function" << std::endl;
-            std::cout << "  " << func->get_qualified_name() << std::endl;
-            // SageInterface::printAST(func);
-
-            // For each loop 
-            Rose_STL_Container<SgNode*> loops = NodeQuery::querySubTree(defn,V_SgForStatement); 
-            if (loops.size() == 0) continue;
-
-            for (Rose_STL_Container<SgNode*>::iterator iter = loops.begin(); iter != loops.end(); iter++) {
-                SgNode *current_loop = *iter;
-                
-                std::cout << std::endl;
-                std::cout << "Found a loop" << std::endl;
-                is_loop_analyzable(current_loop);
-
-                std::cout << std::endl;
-                // SageInterface::printAST(current_loop);
-
-            } // end for-loop for loops
+            
+            process_function_body(defn);
         } // end for-loop for declarations
     } //end for-loop for files
 
