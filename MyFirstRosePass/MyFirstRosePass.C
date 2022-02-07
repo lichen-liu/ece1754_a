@@ -12,6 +12,7 @@
 #include "rose.h"
 #include <iostream>
 #include <unordered_map>
+#include <algorithm>
 
 namespace {
 
@@ -19,7 +20,8 @@ std::string get_SgNode_string(SgNode *node) {
     SgLocatedNode *located = isSgLocatedNode(node);
     ROSE_ASSERT(located);
     Sg_File_Info *file_info = located->get_file_info();
-    return file_info->get_physical_filename() + " " + std::to_string(file_info->get_line()) + ":" + std::to_string(file_info->get_col());
+    return file_info->get_physical_filename() + " " + std::to_string(file_info->get_line()) + ":" + std::to_string(file_info->get_col()) +
+        " " + node->class_name();
 }
 
 SgInitializedName* is_loop_analyzable(SgNode *for_loop_node, bool debug=true, bool verbose=false) {
@@ -46,6 +48,8 @@ SgInitializedName* is_loop_analyzable(SgNode *for_loop_node, bool debug=true, bo
     // b. a test expression
     // c. an increment expression
     // d. loop index variable should be of an integer type
+
+    // TODO: handwrite one that supports multiple initializations
     bool is_canonical = SageInterface::isCanonicalForLoop(for_loop_node, &ivar, &lb, &ub, &step, &body);
    
     if (debug) {
@@ -76,7 +80,7 @@ SgInitializedName* is_loop_analyzable(SgNode *for_loop_node, bool debug=true, bo
         SgIntVal *step_value = isSgIntVal(step);
         bool is_increment_step_constexpr = (step_value != nullptr);
         
-        if(is_increment_step_constexpr) {
+        if (is_increment_step_constexpr) {
             if (debug) {
                 std::cout << "    is_increment_step_constexpr=True, step_value=" << step_value->get_value() << std::endl;
 
@@ -88,23 +92,23 @@ SgInitializedName* is_loop_analyzable(SgNode *for_loop_node, bool debug=true, bo
 
             // Check whether the induction variable is modified in the subtree
             // with the root that is the loop body of for_loop_node
-            std::set<SgInitializedName *> readVars;
-            std::set<SgInitializedName *> writeVars;
-            SageInterface::collectReadWriteVariables(body, readVars, writeVars/*, coarseGrain=true*/);
+            std::set<SgInitializedName*> read_vars;
+            std::set<SgInitializedName*> write_vars;
+            SageInterface::collectReadWriteVariables(body, read_vars, write_vars);
             if (debug) {
                 if (verbose) {
                     std::cout << "    body read:" << std::endl;
-                    for(auto r: readVars) {
+                    for (auto r: read_vars) {
                         SageInterface::printAST(r);
                     }
                 }
                 std::cout << "    body write:" << std::endl;
-                for(auto w: writeVars) {
+                for (auto w: write_vars) {
                     SageInterface::printAST(w);
                 }
             }
 
-            bool is_induction_variable_unmodified = (writeVars.count(ivar) == 0);
+            bool is_induction_variable_unmodified = (write_vars.count(ivar) == 0);
             if (is_induction_variable_unmodified) {
                 if (debug) {
                     std::cout << "      is_induction_variable_unmodified=true" << std::endl;
@@ -120,6 +124,63 @@ SgInitializedName* is_loop_analyzable(SgNode *for_loop_node, bool debug=true, bo
     return nullptr;
 }
 
+void determine_dependency_check_targets(SgNode *for_loop_node,
+    const std::unordered_map<SgInitializedName*, SgForStatement*> &induction_variables,
+    const std::unordered_map<SgForStatement*, SgInitializedName*> &analyzable_loops,
+    bool debug=true) {
+    SgForStatement *for_stmt = isSgForStatement(for_loop_node);
+    ROSE_ASSERT(for_stmt);
+    if (analyzable_loops.count(for_stmt) == 0) return;
+    
+    // Get all read write refs
+    std::vector<SgNode*> read_refs;
+    std::vector<SgNode*> write_refs;
+    SageInterface::collectReadWriteRefs(for_stmt, read_refs, write_refs);
+
+    // Filter only array refs
+    auto mapfilter_SgPntrArrRefExp = [](const std::vector<SgNode*> &v) {
+        std::vector<SgPntrArrRefExp*> tmp;
+        std::transform(v.begin(), v.end(), std::back_inserter(tmp), [](SgNode *n){return isSgPntrArrRefExp(n);});
+        std::vector<SgPntrArrRefExp*> res;
+        std::copy_if(tmp.begin(), tmp.end(), std::back_inserter(res), [](SgPntrArrRefExp *n){return n;});
+        return res;
+    };
+    std::vector<SgPntrArrRefExp*> read_array_refs = mapfilter_SgPntrArrRefExp(read_refs);
+    std::vector<SgPntrArrRefExp*> write_array_refs = mapfilter_SgPntrArrRefExp(write_refs);
+
+    if (debug) {
+        std::cout << std::endl << std::endl;
+        SageInterface::printAST(for_stmt);
+        std::cout << std::endl;
+        std::cout << "read_array_refs" << std::endl;
+        for (auto r: read_array_refs) {
+            SageInterface::printAST(r);
+        }
+        std::cout << "write_array_refs" << std::endl;
+        for (auto w: write_array_refs) {
+            SageInterface::printAST(w);
+        }
+    }
+
+    // Deal with write dependency
+    for (SgPntrArrRefExp *w_array_ref: write_array_refs) {
+        SgStatement *enclosing_stmt = SageInterface::getEnclosingStatement(w_array_ref);
+        SgScopeStatement *enclosing_loop_stmt = SageInterface::findEnclosingLoop(enclosing_stmt);
+        SgForStatement *enclosing_for_stmt = isSgForStatement(enclosing_loop_stmt);
+        if (enclosing_for_stmt == for_stmt) {
+            if (debug) {
+                std::cout << "Analyzing W [" << get_SgNode_string(w_array_ref) <<  
+                    "] in [" << get_SgNode_string(for_stmt) << "]" << std::endl;
+            }
+
+
+            // Deal with write-write dependency
+
+            // Deal with write-read dependency
+        }
+    }
+}
+
 void process_function_body(SgFunctionDefinition *defn) {
     SgBasicBlock *body = defn->get_body();
     std::cout << "Found a function" << std::endl;
@@ -132,6 +193,7 @@ void process_function_body(SgFunctionDefinition *defn) {
 
     // Build a mapping between analyzable loop and its indunction variable
     std::unordered_map<SgInitializedName*, SgForStatement*> induction_variables;
+    std::unordered_map<SgForStatement*, SgInitializedName*> analyzable_loops;
     for (Rose_STL_Container<SgNode*>::iterator iter = loops.begin(); iter != loops.end(); iter++) {
         SgNode *current_loop = *iter;
         
@@ -143,10 +205,16 @@ void process_function_body(SgFunctionDefinition *defn) {
             SgForStatement *for_stmt = isSgForStatement(current_loop);
             ROSE_ASSERT(for_stmt);
             induction_variables.emplace(ind_var, for_stmt);
+            analyzable_loops.emplace(for_stmt, ind_var);
         }
 
         std::cout << std::endl;
         // SageInterface::printAST(current_loop);
+    }
+
+    // Determine dependency check targets
+    for (SgNode *current_loop: loops) {
+        determine_dependency_check_targets(current_loop, induction_variables, analyzable_loops);
     }
 }
 

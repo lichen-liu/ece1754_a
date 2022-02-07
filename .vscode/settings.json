@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "testCode.C": "cpp"
+        "autoPar.C": "cpp",
+        "testCode.C": "cpp",
+        "autoParSupport.C": "cpp"
     }
 }
