@@ -12,11 +12,27 @@
 #include "rose.h"
 #include <iostream>
 
-bool is_loop_analyzable(SgNode *for_loop_node) {
-    // SgForStatement* for_loop_stmt = dynamic_cast<SgForStatement>(for_loop_node);
-    // ROSE_ASSERT(for_loop_stmt);
-    
-    // SgStatement *test_stmt = for_loop_stmt->get_test();
+namespace {
+
+std::string get_SgNode_string(SgNode *node) {
+    SgLocatedNode *located = isSgLocatedNode(node);
+    ROSE_ASSERT(located);
+    Sg_File_Info *file_info = located->get_file_info();
+    return file_info->get_physical_filename() + " " + std::to_string(file_info->get_line()) + ":" + std::to_string(file_info->get_col());
+}
+
+SgInitializedName* is_loop_analyzable(SgNode *for_loop_node, bool debug=true, bool verbose=false) {
+    // Determine the “analyzable” loop
+    // An analyzable loop is defined as a for loop that has an induction variable (call it i) with: 
+    // a. One or more initialization statements, 
+    // b. A single test expression that uses <, <=, > or >= operations,  
+    // c. A single increment expression in the form i=i+c, i=i-c, ++i, --i, i++ 
+    //    or ++i, where c is a compile time constant, and 
+    // d. The value of i is not changed in the loop
+
+    if (debug) {
+        std::cout << for_loop_node->unparseToString() << std::endl;
+    }
 
     SgInitializedName *ivar = nullptr;
     SgExpression *lb = nullptr;
@@ -31,34 +47,78 @@ bool is_loop_analyzable(SgNode *for_loop_node) {
     // d. loop index variable should be of an integer type
     bool is_canonical = SageInterface::isCanonicalForLoop(for_loop_node, &ivar, &lb, &ub, &step, &body);
    
-    std::cout << "  var:" << std::endl;
-    SageInterface::printAST(ivar);
+    if (debug) {
+        std::cout << "  var:" << std::endl;
+        SageInterface::printAST(ivar);
 
-    std::cout << "  lb:" << std::endl;
-    SageInterface::printAST(lb);
+        std::cout << "  lb:" << std::endl;
+        SageInterface::printAST(lb);
 
-    std::cout << "  ub:" << std::endl;
-    SageInterface::printAST(ub);
+        std::cout << "  ub:" << std::endl;
+        SageInterface::printAST(ub);
 
-    std::cout << "  step:" << std::endl;
-    SageInterface::printAST(step);
-
-    if (is_canonical) {
-        
+        std::cout << "  step:" << std::endl;
+        SageInterface::printAST(step);
     }
-    // The “analyzable” loops. An analyzable loop is defined as a for loop that has an induction variable (call it i) with: 
-    // a. one or more initialization statements, 
-    // b. a single test expression that uses <, <=, > or >= operations,  
-    // c. a single increment expression in the form i=i+c, i=i-c, ++i, --i, i++ 
-    // or ++i, where c is a compile time constant, and 
-    // d. the value of i is not changed in the loop
     
-    // If is_canonical is true
-    // 1. only need to check whether increment step c is a compile time constant
-    // 2. the value of the induction variable is not changed in the loop
+    // If is_canonical is true, then need to check
+    // 1. Whether increment step c is a compile time constant
+    // 2. The value of the induction variable is not changed in the loop
+    if (is_canonical) {
+        if (debug) {
+            std::cout << "  is_canonical=True" << std::endl;
+        }
 
+        // We want to check whether increment step c is a compile time constant.
+        // For that to be true, step must be a constant integer value, so it must be a SgIntVal type
+        // TODO: support constant propagation and folding
+        SgIntVal *step_value = isSgIntVal(step);
+        bool is_increment_step_constexpr = (step_value != nullptr);
+        
+        if(is_increment_step_constexpr) {
+            if (debug) {
+                std::cout << "    is_increment_step_constexpr=True, step_value=" << step_value->get_value() << std::endl;
 
-    return true;
+                if (verbose) {
+                    std::cout << "    body:" << std::endl;
+                    SageInterface::printAST(body);
+                }
+            }
+
+            // Check whether the induction variable is modified in the subtree
+            // with the root that is the loop body of for_loop_node
+            std::set<SgInitializedName *> readVars;
+            std::set<SgInitializedName *> writeVars;
+            SageInterface::collectReadWriteVariables(body, readVars, writeVars/*, coarseGrain=true*/);
+            if (debug) {
+                if (verbose) {
+                    std::cout << "    body read:" << std::endl;
+                    for(auto r: readVars) {
+                        SageInterface::printAST(r);
+                    }
+                }
+                std::cout << "    body write:" << std::endl;
+                for(auto w: writeVars) {
+                    SageInterface::printAST(w);
+                }
+            }
+
+            bool is_induction_variable_unmodified = (writeVars.count(ivar) == 0);
+            if (is_induction_variable_unmodified) {
+                if (debug) {
+                    std::cout << "      is_induction_variable_unmodified=true" << std::endl;
+                }
+
+                std::cout << "Analyzable! " << get_SgNode_string(for_loop_node) << std::endl;
+                return ivar;
+            }
+        }
+    }
+
+    std::cout << "Not analyzable! " << get_SgNode_string(for_loop_node) << std::endl;
+    return nullptr;
+}
+
 }
 
 int main (int argc, char *argv[]) {
@@ -100,8 +160,11 @@ int main (int argc, char *argv[]) {
             for (Rose_STL_Container<SgNode*>::iterator iter = loops.begin(); iter != loops.end(); iter++) {
                 SgNode *current_loop = *iter;
                 
+                std::cout << std::endl;
                 std::cout << "Found a loop" << std::endl;
                 is_loop_analyzable(current_loop);
+
+                std::cout << std::endl;
                 // SageInterface::printAST(current_loop);
 
             } // end for-loop for loops
