@@ -11,6 +11,7 @@
 
 #include "rose.h"
 #include <iostream>
+#include <unordered_map>
 
 namespace {
 
@@ -129,12 +130,20 @@ void process_function_body(SgFunctionDefinition *defn) {
     Rose_STL_Container<SgNode*> loops = NodeQuery::querySubTree(body, V_SgForStatement); 
     if (loops.size() == 0) return;
 
+    // Build a mapping between analyzable loop and its indunction variable
+    std::unordered_map<SgInitializedName*, SgForStatement*> induction_variables;
     for (Rose_STL_Container<SgNode*>::iterator iter = loops.begin(); iter != loops.end(); iter++) {
         SgNode *current_loop = *iter;
         
         std::cout << std::endl;
         std::cout << "Found a loop" << std::endl;
-        is_loop_analyzable(current_loop);
+        SgInitializedName *ind_var = is_loop_analyzable(current_loop);
+
+        if (ind_var) {
+            SgForStatement *for_stmt = isSgForStatement(current_loop);
+            ROSE_ASSERT(for_stmt);
+            induction_variables.emplace(ind_var, for_stmt);
+        }
 
         std::cout << std::endl;
         // SageInterface::printAST(current_loop);
