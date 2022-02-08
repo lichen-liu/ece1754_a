@@ -229,7 +229,43 @@ namespace
         return array_name;
     }
 
-    SgForStatement *find_common_ancestor_for_stmt(SgForStatement *n1, SgForStatement *n2, SgScopeStatement *nt, bool debug = false)
+    void for_stmt_ancestor_visitor(SgForStatement *from, SgScopeStatement *end, std::function<bool(SgForStatement *)> worker, bool debug)
+    {
+        if (debug)
+        {
+            std::cout << "ancestor traversal: " << to_string(from) << std::endl;
+        }
+        SgStatement *cur_node = from;
+        while (cur_node != end)
+        {
+            if (debug)
+            {
+                std::cout << "  " << to_string(cur_node) << std::endl;
+            }
+
+            if (SgScopeStatement *enclosing_loop_stmt = SageInterface::findEnclosingLoop(cur_node))
+            {
+                if (SgForStatement *enclosing_for_stmt = isSgForStatement(enclosing_loop_stmt))
+                {
+                    if (!worker(enclosing_for_stmt))
+                    {
+                        return;
+                    }
+                }
+            }
+
+            ROSE_ASSERT(SageInterface::getEnclosingScope(cur_node) != cur_node);
+            cur_node = SageInterface::getEnclosingScope(cur_node);
+        }
+    }
+
+    std::vector<SgForStatement *> get_all_for_stmt(SgForStatement *from, SgScopeStatement *end, bool debug = true)
+    {
+        std::vector<SgForStatement *> res;
+        return res;
+    }
+
+    SgForStatement *find_common_ancestor_for_stmt(SgForStatement *n1, SgForStatement *n2, SgScopeStatement *end, bool debug = false)
     {
         if (n1 == n2)
             return n1;
@@ -238,56 +274,30 @@ namespace
         if (SageInterface::isAncestor(n2, n1))
             return n2;
 
-        auto ancestor_visitor = [nt, debug](SgForStatement *from, std::function<bool(SgForStatement *)> worker)
-        {
-            if (debug)
-            {
-                std::cout << "ancestor traversal: " << to_string(from) << std::endl;
-            }
-            SgStatement *cur_node = SageInterface::getEnclosingStatement(from);
-            while (cur_node != nt)
-            {
-                if (debug)
-                {
-                    std::cout << "  " << to_string(cur_node) << std::endl;
-                }
-
-                if (SgScopeStatement *enclosing_loop_stmt = SageInterface::findEnclosingLoop(cur_node))
-                {
-                    if (SgForStatement *enclosing_for_stmt = isSgForStatement(enclosing_loop_stmt))
-                    {
-                        if (!worker(enclosing_for_stmt))
-                        {
-                            return;
-                        }
-                    }
-                }
-
-                ROSE_ASSERT(SageInterface::getEnclosingScope(cur_node) != cur_node);
-                cur_node = SageInterface::getEnclosingScope(cur_node);
-            }
-        };
-
         // Do a tree traversal upwards to find all n1 ancestors
         std::unordered_set<SgForStatement *> n1_ancestors;
-        ancestor_visitor(n1, [&n1_ancestors](SgForStatement *enclosing_for_stmt)
-                         {
-                             n1_ancestors.insert(enclosing_for_stmt);
-                             return true;
-                         });
+        for_stmt_ancestor_visitor(
+            n1, end, [&n1_ancestors](SgForStatement *enclosing_for_stmt)
+            {
+                n1_ancestors.insert(enclosing_for_stmt);
+                return true;
+            },
+            debug);
 
         // Do a tree traversal upwards to find all n2 ancestors
         SgForStatement *common_ancestor = nullptr;
-        ancestor_visitor(n2, [&n1_ancestors, &common_ancestor](SgForStatement *enclosing_for_stmt)
-                         {
-                             if (n1_ancestors.count(enclosing_for_stmt))
-                             {
-                                 common_ancestor = enclosing_for_stmt;
-                                 // early exit as soon as we hit an n1 ancestor
-                                 return false;
-                             }
-                             return true;
-                         });
+        for_stmt_ancestor_visitor(
+            n2, end, [&n1_ancestors, &common_ancestor](SgForStatement *enclosing_for_stmt)
+            {
+                if (n1_ancestors.count(enclosing_for_stmt))
+                {
+                    common_ancestor = enclosing_for_stmt;
+                    // early exit as soon as we hit an n1 ancestor
+                    return false;
+                }
+                return true;
+            },
+            debug);
 
         return common_ancestor;
     }
@@ -509,8 +519,8 @@ namespace
                 SgForStatement *ancestor_for_stmt = find_common_ancestor_for_stmt(w_array_ref_enclosing_for_stmt, target_w_array_ref_enclosing_for_stmt, scope_stmt);
                 if (debug)
                 {
-                    const std::string indent_str = get_indent(3);
-                    std::cout << indent_str << "Ancestor for_stmt: " << to_string(ancestor_for_stmt) << std::endl;
+                    std::cout << get_indent(3) << "Common Ancestor.." << std::endl;
+                    std::cout << get_indent(4) << "for_stmt: " << to_string(ancestor_for_stmt) << std::endl;
                 }
             }
 
