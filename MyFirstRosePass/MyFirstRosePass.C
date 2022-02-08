@@ -493,7 +493,7 @@ namespace
         std::vector<SgForStatement *> outer_for_stmts = get_outer_for_stmts(ancestor_for_stmt, scope_stmt);
         if (debug)
         {
-            std::cout << get_indent(indent + 1) << outer_for_stmts.size() << " Outer for_stmts.." << std::endl;
+            std::cout << get_indent(indent + 1) << "Outer for_stmts=" << outer_for_stmts.size() << ".." << std::endl;
             for (SgForStatement *for_stmt : outer_for_stmts)
             {
                 std::cout << get_indent(indent + 2) << to_string(for_stmt) << std::endl;
