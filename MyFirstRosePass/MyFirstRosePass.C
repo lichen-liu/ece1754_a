@@ -188,6 +188,37 @@ namespace
         return ss.str();
     }
 
+    void print_ast(SgNode *root)
+    {
+        std::cout << std::endl;
+        std::cout << "====================== DEBUG ======================" << std::endl;
+        SageInterface::printAST(root);
+        std::cout << "====================== DEBUG ======================" << std::endl;
+        std::cout << std::endl;
+    }
+
+    SgExpression *get_array_from_ref(SgPntrArrRefExp *array_ref, bool debug = false, int indent = 0)
+    {
+        SgExpression *array_name_exp = nullptr;
+        std::unique_ptr<std::vector<SgExpression *>> array_ref_subscripts = std::make_unique<std::vector<SgExpression *>>();
+        std::vector<SgExpression *> *array_ref_subscripts_p = array_ref_subscripts.get();
+        // What a stupid API??? You only need to modify a vector but why a double pointer?
+        SageInterface::isArrayReference(array_ref, &array_name_exp, &array_ref_subscripts_p);
+
+        if (debug)
+        {
+            const std::string indent_str(2 * indent, ' ');
+            const std::string inner_indent_str(2 * (1 + indent), ' ');
+            std::cout << indent_str << "array: " << get_SgNode_string(array_name_exp) << std::endl;
+            std::cout << indent_str << "subscript:" << std::endl;
+            for (SgExpression *s : *array_ref_subscripts)
+            {
+                std::cout << inner_indent_str << get_SgNode_string(s) << std::endl;
+            }
+        }
+        return array_name_exp;
+    }
+
     SgInitializedName *is_loop_analyzable(SgNode *for_loop_node, bool debug = true, bool verbose = false)
     {
         // Determine the “analyzable” loop
@@ -302,20 +333,16 @@ namespace
         return nullptr;
     }
 
-    void determine_dependency_check_targets(SgNode *for_loop_node,
+    // Check over an entire scope. Do not call this function on multiple scopes that overlap
+    void determine_dependency_check_targets(SgScopeStatement *scope_stmt,
                                             const std::unordered_map<SgInitializedName *, SgForStatement *> &induction_variables,
                                             const std::unordered_map<SgForStatement *, SgInitializedName *> &analyzable_loops,
                                             bool debug = true)
     {
-        SgForStatement *for_stmt = isSgForStatement(for_loop_node);
-        ROSE_ASSERT(for_stmt);
-        if (analyzable_loops.count(for_stmt) == 0)
-            return;
-
         // Get all read write refs
         std::vector<SgNode *> read_refs;
         std::vector<SgNode *> write_refs;
-        SageInterface::collectReadWriteRefs(for_stmt, read_refs, write_refs);
+        SageInterface::collectReadWriteRefs(scope_stmt, read_refs, write_refs);
 
         // Filter only array refs
         auto mapfilter_SgPntrArrRefExp = [](const std::vector<SgNode *> &v)
@@ -333,16 +360,15 @@ namespace
 
         if (debug)
         {
-            std::cout << std::endl
-                      << std::endl;
-            SageInterface::printAST(for_stmt);
             std::cout << std::endl;
-            std::cout << "read_array_refs" << std::endl;
+            print_ast(scope_stmt);
+            std::cout << "In scope: " << get_SgNode_string(scope_stmt) << std::endl;
+            std::cout << "read_array_refs:" << std::endl;
             for (auto r : read_array_refs)
             {
                 SageInterface::printAST(r);
             }
-            std::cout << "write_array_refs" << std::endl;
+            std::cout << "write_array_refs:" << std::endl;
             for (auto w : write_array_refs)
             {
                 SageInterface::printAST(w);
@@ -350,40 +376,35 @@ namespace
         }
 
         // Deal with write dependency
-        for (SgPntrArrRefExp *w_array_ref : write_array_refs)
+        for (auto w_array_ref_it = write_array_refs.begin(); w_array_ref_it != write_array_refs.end(); ++w_array_ref_it)
         {
+            SgPntrArrRefExp *w_array_ref = *w_array_ref_it;
+            if (debug)
+            {
+                std::cout << "Analyzing W [" << get_SgNode_string(w_array_ref) << "]" << std::endl;
+            }
             SgStatement *enclosing_stmt = SageInterface::getEnclosingStatement(w_array_ref);
             SgScopeStatement *enclosing_loop_stmt = SageInterface::findEnclosingLoop(enclosing_stmt);
             SgForStatement *enclosing_for_stmt = isSgForStatement(enclosing_loop_stmt);
 
-            // Deal with write array ref that's at the current for stmt scope
-            if (enclosing_for_stmt != for_stmt)
-                continue;
+            // TODO: check analyzable_loops
 
-            SgExpression *w_array_name_exp = nullptr;
-            std::unique_ptr<std::vector<SgExpression *>> w_array_ref_subscripts = std::make_unique<std::vector<SgExpression *>>();
-            std::vector<SgExpression *> *w_array_ref_subscripts_p = w_array_ref_subscripts.get();
-            // What a stupid API??? You only need to modify a vector but why a double pointer?
-            SageInterface::isArrayReference(w_array_ref, &w_array_name_exp, &w_array_ref_subscripts_p);
+            // Deal with write array ref that's at the current for stmt scope
+            // if (enclosing_for_stmt != for_stmt)
+            //     continue;
+
+            SgExpression *w_array_name_exp = get_array_from_ref(w_array_ref, debug, 1);
 
             if (debug)
             {
-                std::cout << "Analyzing W [" << get_SgNode_string(w_array_ref) << "] in [" << get_SgNode_string(for_stmt) << "]" << std::endl;
-
-                std::cout << "  array: " << get_SgNode_string(w_array_name_exp) << std::endl;
-                std::cout << "  subscript:" << std::endl;
-                for (SgExpression *s : *w_array_ref_subscripts)
-                {
-                    std::cout << "    " << get_SgNode_string(s) << std::endl;
-                }
+                std::cout << "    Write-Write:" << std::endl;
             }
-
             // Deal with write-write dependency
-            for (SgPntrArrRefExp *target_w_array_ref : write_array_refs)
+            for (auto target_w_array_ref_it = w_array_ref_it + 1; target_w_array_ref_it != write_array_refs.end(); ++target_w_array_ref_it)
             {
-                // Skip self
-                if (w_array_ref == target_w_array_ref)
-                    continue;
+                SgPntrArrRefExp *target_w_array_ref = *target_w_array_ref_it;
+
+                SgExpression *target_w_array_name_exp = get_array_from_ref(target_w_array_ref, debug, 3);
             }
 
             // Deal with write-read dependency
@@ -426,10 +447,7 @@ namespace
         }
 
         // Determine dependency check targets
-        for (SgNode *current_loop : loops)
-        {
-            determine_dependency_check_targets(current_loop, induction_variables, analyzable_loops);
-        }
+        determine_dependency_check_targets(body, induction_variables, analyzable_loops);
     }
 
 }
