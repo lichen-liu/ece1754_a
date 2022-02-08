@@ -18,22 +18,64 @@
 
 namespace
 {
-    void serialize(SgNode *node, std::string &prefix, bool hasRemaining, std::ostringstream &out);
+    void serialize(SgNode *node, const std::string &prefix, bool hasRemaining, std::ostringstream &out);
 
     // data dependence testing pair
-    struct raw_ddtp
+    struct RawDDTP
     {
         SgPntrArrRefExp *w_array_ref;
         SgPntrArrRefExp *target_array_ref;
-        std::vector<SgForStatement *> outer_for_stmts;
+        std::vector<SgForStatement *> outer_for_stmts; // from inner to outer
     };
+
+    struct DDTP
+    {
+        SgPntrArrRefExp *w_array_ref;
+        SgPntrArrRefExp *target_array_ref;
+        std::vector<SgInitializedName *> common_induction_vars; // from outer to inner
+    };
+
+    std::ostream &operator<<(std::ostream &os, const DDTP &ddtp)
+    {
+        os << ddtp.w_array_ref->unparseToString() << " : " << ddtp.target_array_ref->unparseToString() << " : ";
+        for (SgInitializedName *var : ddtp.common_induction_vars)
+        {
+            os << var->get_name().getString() << ", ";
+        }
+        return os;
+    }
+
+    struct DDTPCollection
+    {
+        std::vector<DDTP> write_write_s;
+        std::vector<DDTP> write_read_s;
+    };
+
+    std::ostream &operator<<(std::ostream &os, const DDTPCollection &ddtpc)
+    {
+        os << std::endl;
+        os << "write ref : write ref : common surrounding loop indices" << std::endl;
+        for (const auto &ww : ddtpc.write_write_s)
+        {
+            os << ww << std::endl;
+        }
+
+        os << std::endl;
+        os << "write ref : read ref : common surrounding loop indices" << std::endl;
+        for (const auto &wr : ddtpc.write_read_s)
+        {
+            os << wr << std::endl;
+        }
+
+        return os;
+    }
 }
 
 namespace
 {
     // From sageInterface.C, modified to print only the current node
     // A special node in the AST text dump
-    void serialize(SgTemplateArgumentPtrList &plist, std::string &prefix, bool hasRemaining, std::ostringstream &out)
+    void serialize(SgTemplateArgumentPtrList &plist, const std::string &prefix, bool hasRemaining, std::ostringstream &out)
     {
         out << prefix;
         out << (hasRemaining ? "|---" : "|___");
@@ -55,7 +97,7 @@ namespace
     }
 
     // From sageInterface.C, modified to print only the current node
-    void serialize(SgNode *node, std::string &prefix, bool hasRemaining, std::ostringstream &out)
+    void serialize(SgNode *node, const std::string &prefix, bool hasRemaining, std::ostringstream &out)
     {
         // there may be NULL children!!
         //if (!node) return;
@@ -340,7 +382,7 @@ namespace
         return nullptr;
     }
 
-    SgInitializedName *is_loop_analyzable(SgNode *for_loop_node, bool debug = true, bool verbose = false)
+    SgInitializedName *is_loop_analyzable(SgNode *for_loop_node, bool debug = false, bool verbose = false)
     {
         // Determine the “analyzable” loop
         // An analyzable loop is defined as a for loop that has an induction variable (call it i) with:
@@ -448,7 +490,7 @@ namespace
                         std::cout << get_indent(3) << "is_induction_variable_unmodified=true" << std::endl;
                     }
 
-                    std::cout << "Analyzable! " << to_string(for_loop_node) << std::endl;
+                    std::cout << "Analyzable! " << to_string(for_loop_node) << " with " << to_string(ivar) << std::endl;
                     return ivar;
                 }
             }
@@ -458,7 +500,30 @@ namespace
         return nullptr;
     }
 
-    std::optional<raw_ddtp> is_potential_dependence_target_pair(
+    DDTP formulate_ddtp(const RawDDTP &raw_ddtp, const std::unordered_map<SgForStatement *, SgInitializedName *> &analyzable_loops)
+    {
+        std::vector<SgInitializedName *> common_induction_vars;
+
+        // Construct common induction vars from inner to outer
+        for (SgForStatement *for_stmt : raw_ddtp.outer_for_stmts)
+        {
+            if (auto fit = analyzable_loops.find(for_stmt); fit != analyzable_loops.end())
+            {
+                common_induction_vars.push_back(fit->second);
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        // Reverse common induction vars from outer to inner
+        std::reverse(common_induction_vars.begin(), common_induction_vars.end());
+
+        return {raw_ddtp.w_array_ref, raw_ddtp.target_array_ref, std::move(common_induction_vars)};
+    }
+
+    std::optional<RawDDTP> is_potential_dependence_target_pair(
         SgPntrArrRefExp *w_array_ref,
         SgPntrArrRefExp *target_array_ref,
         SgScopeStatement *scope_stmt,
@@ -504,15 +569,17 @@ namespace
             }
         }
 
-        return raw_ddtp{w_array_ref, target_array_ref, std::move(outer_for_stmts)};
+        return RawDDTP{w_array_ref, target_array_ref, std::move(outer_for_stmts)};
     }
 
     // Check over an entire scope. Do not call this function on multiple scopes that overlap
-    void determine_potential_dependence_targets_of_scope(SgScopeStatement *scope_stmt,
-                                                         const std::unordered_map<SgInitializedName *, SgForStatement *> &induction_variables,
-                                                         const std::unordered_map<SgForStatement *, SgInitializedName *> &analyzable_loops,
-                                                         bool debug = true)
+    DDTPCollection determine_potential_dependence_targets_of_scope(SgScopeStatement *scope_stmt,
+                                                                   const std::unordered_map<SgForStatement *, SgInitializedName *> &analyzable_loops,
+                                                                   bool debug = false)
     {
+        std::vector<DDTP> ww_ddtps;
+        std::vector<DDTP> wr_ddtps;
+
         // Get all read write refs
         std::vector<SgNode *> read_refs;
         std::vector<SgNode *> write_refs;
@@ -572,7 +639,15 @@ namespace
                     std::cout << get_indent(1) << "Write Target " << to_string(target_w_array_ref) << std::endl;
                 }
 
-                std::optional<raw_ddtp> res = is_potential_dependence_target_pair(w_array_ref, target_w_array_ref, scope_stmt, debug, 2);
+                if (std::optional<RawDDTP> res = is_potential_dependence_target_pair(w_array_ref, target_w_array_ref, scope_stmt, debug, 2))
+                {
+                    DDTP ddtp = formulate_ddtp(*res, analyzable_loops);
+                    if (debug)
+                    {
+                        std::cout << get_indent(1) << ddtp << std::endl;
+                    }
+                    ww_ddtps.emplace_back(std::move(ddtp));
+                }
             }
 
             // Deal with write-read dependence
@@ -583,12 +658,21 @@ namespace
                     std::cout << get_indent(1) << "Read Target " << to_string(target_r_array_ref) << std::endl;
                 }
 
-                std::optional<raw_ddtp> res = is_potential_dependence_target_pair(w_array_ref, target_r_array_ref, scope_stmt, debug, 2);
+                if (std::optional<RawDDTP> res = is_potential_dependence_target_pair(w_array_ref, target_r_array_ref, scope_stmt, debug, 2))
+                {
+                    DDTP ddtp = formulate_ddtp(*res, analyzable_loops);
+                    if (debug)
+                    {
+                        std::cout << get_indent(1) << ddtp << std::endl;
+                    }
+                    wr_ddtps.emplace_back(std::move(ddtp));
+                }
             }
         }
+        return {std::move(ww_ddtps), std::move(wr_ddtps)};
     }
 
-    void process_function_body(SgFunctionDefinition *defn)
+    void process_function_body(SgFunctionDefinition *defn, bool debug = false)
     {
         SgBasicBlock *body = defn->get_body();
         std::cout << "Found a function" << std::endl;
@@ -601,7 +685,6 @@ namespace
             return;
 
         // Build a mapping between analyzable loop and its indunction variable
-        std::unordered_map<SgInitializedName *, SgForStatement *> induction_variables;
         std::unordered_map<SgForStatement *, SgInitializedName *> analyzable_loops;
         for (Rose_STL_Container<SgNode *>::iterator iter = loops.begin(); iter != loops.end(); iter++)
         {
@@ -609,28 +692,29 @@ namespace
 
             std::cout << std::endl;
             std::cout << "Found a loop" << std::endl;
-            SgInitializedName *ind_var = is_loop_analyzable(current_loop);
+            SgInitializedName *ind_var = is_loop_analyzable(current_loop, debug);
 
             if (ind_var)
             {
                 SgForStatement *for_stmt = isSgForStatement(current_loop);
                 ROSE_ASSERT(for_stmt);
-                induction_variables.emplace(ind_var, for_stmt);
                 analyzable_loops.emplace(for_stmt, ind_var);
             }
-
-            std::cout << std::endl;
-            // SageInterface::printAST(current_loop);
         }
 
         // Determine dependence check targets
-        determine_potential_dependence_targets_of_scope(body, induction_variables, analyzable_loops);
+        DDTPCollection ddtpc = determine_potential_dependence_targets_of_scope(body, analyzable_loops, debug);
+        std::cout << std::endl;
+        std::cout << "Data Dependence Testing Pair Collection" << std::endl;
+        std::cout << ddtpc << std::endl;
     }
 
 }
 
 int main(int argc, char *argv[])
 {
+    constexpr bool debug = false;
+
     // Build a project
     SgProject *project = frontend(argc, argv);
     ROSE_ASSERT(project);
@@ -662,7 +746,7 @@ int main(int argc, char *argv[])
             if (defn->get_file_info()->get_filename() != sageFile->get_file_info()->get_filename())
                 continue;
 
-            process_function_body(defn);
+            process_function_body(defn, debug);
         } // end for-loop for declarations
     }     //end for-loop for files
 
