@@ -14,10 +14,19 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
+#include <optional>
 
 namespace
 {
     void serialize(SgNode *node, std::string &prefix, bool hasRemaining, std::ostringstream &out);
+
+    // data dependence testing pair
+    struct raw_ddtp
+    {
+        SgPntrArrRefExp *w_array_ref;
+        SgPntrArrRefExp *target_array_ref;
+        std::vector<SgForStatement *> outer_for_stmts;
+    };
 }
 
 namespace
@@ -203,7 +212,7 @@ namespace
         std::cout << std::endl;
     }
 
-    SgInitializedName *get_array_from_ref(SgPntrArrRefExp *array_ref, bool debug = false, int indent = 0)
+    SgInitializedName *get_array_name_from_ref(SgPntrArrRefExp *array_ref, bool debug = false, int indent = 0)
     {
         SgExpression *array_name_exp = nullptr;
         std::unique_ptr<std::vector<SgExpression *>> array_ref_subscripts = std::make_unique<std::vector<SgExpression *>>();
@@ -231,6 +240,8 @@ namespace
 
     void for_stmt_ancestor_visitor(SgForStatement *from, SgScopeStatement *end, std::function<bool(SgForStatement *)> worker, bool debug)
     {
+        ROSE_ASSERT(from);
+        ROSE_ASSERT(end);
         if (debug)
         {
             std::cout << "ancestor traversal: " << to_string(from) << std::endl;
@@ -259,9 +270,24 @@ namespace
         }
     }
 
-    std::vector<SgForStatement *> get_all_for_stmt(SgForStatement *from, SgScopeStatement *end, bool debug = true)
+    std::vector<SgForStatement *> get_outer_for_stmts(SgForStatement *from, SgScopeStatement *end, bool debug = false)
     {
         std::vector<SgForStatement *> res;
+        if (from)
+        {
+            // Do a tree traversal upwards to find all ancestors, including itself
+            for_stmt_ancestor_visitor(
+                from, end, [&res](SgForStatement *enclosing_for_stmt)
+                {
+                    res.push_back(enclosing_for_stmt);
+                    return true;
+                },
+                debug);
+
+            // There may be duplicates
+            res.erase(std::unique(res.begin(), res.end()), res.end());
+        }
+
         return res;
     }
 
@@ -274,8 +300,8 @@ namespace
         if (SageInterface::isAncestor(n2, n1))
             return n2;
 
-        // Do a tree traversal upwards to find all n1 ancestors
         std::unordered_set<SgForStatement *> n1_ancestors;
+        // Do a tree traversal upwards to find all n1 ancestors, including itself
         for_stmt_ancestor_visitor(
             n1, end, [&n1_ancestors](SgForStatement *enclosing_for_stmt)
             {
@@ -428,11 +454,60 @@ namespace
         return nullptr;
     }
 
+    std::optional<raw_ddtp> is_potential_dependence_target_pair(
+        SgPntrArrRefExp *w_array_ref,
+        SgPntrArrRefExp *target_array_ref,
+        SgScopeStatement *scope_stmt,
+        bool debug = false, int indent = 0)
+    {
+        // Find write-xx dependence on the same array name
+        SgInitializedName *w_array_name = get_array_name_from_ref(w_array_ref);
+        SgInitializedName *target_array_name = get_array_name_from_ref(target_array_ref, debug, indent);
+        if (target_array_name != w_array_name)
+        {
+            return std::nullopt;
+        }
+        if (debug)
+        {
+            std::cout << get_indent(indent + 1) << "Name Matching.." << std::endl;
+        }
+
+        // Check target_array_ref is inside a for loop
+        SgForStatement *w_array_ref_enclosing_for_stmt = get_enclosing_for_stmt(w_array_ref);
+        ROSE_ASSERT(w_array_ref_enclosing_for_stmt);
+        SgForStatement *target_array_ref_enclosing_for_stmt = get_enclosing_for_stmt(target_array_ref);
+        if (target_array_ref_enclosing_for_stmt == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        // Find common ancestor
+        SgForStatement *ancestor_for_stmt = find_common_ancestor_for_stmt(w_array_ref_enclosing_for_stmt, target_array_ref_enclosing_for_stmt, scope_stmt);
+        if (debug)
+        {
+            std::cout << get_indent(indent + 1) << "Common Ancestor.." << std::endl;
+            std::cout << get_indent(indent + 2) << to_string(ancestor_for_stmt) << std::endl;
+        }
+
+        // Find all outer loops
+        std::vector<SgForStatement *> outer_for_stmts = get_outer_for_stmts(ancestor_for_stmt, scope_stmt);
+        if (debug)
+        {
+            std::cout << get_indent(indent + 1) << outer_for_stmts.size() << " Outer for_stmts.." << std::endl;
+            for (SgForStatement *for_stmt : outer_for_stmts)
+            {
+                std::cout << get_indent(indent + 2) << to_string(for_stmt) << std::endl;
+            }
+        }
+
+        return raw_ddtp{w_array_ref, target_array_ref, std::move(outer_for_stmts)};
+    }
+
     // Check over an entire scope. Do not call this function on multiple scopes that overlap
-    void determine_dependency_check_targets(SgScopeStatement *scope_stmt,
-                                            const std::unordered_map<SgInitializedName *, SgForStatement *> &induction_variables,
-                                            const std::unordered_map<SgForStatement *, SgInitializedName *> &analyzable_loops,
-                                            bool debug = true)
+    void determine_potential_dependence_targets_of_scope(SgScopeStatement *scope_stmt,
+                                                         const std::unordered_map<SgInitializedName *, SgForStatement *> &induction_variables,
+                                                         const std::unordered_map<SgForStatement *, SgInitializedName *> &analyzable_loops,
+                                                         bool debug = true)
     {
         // Get all read write refs
         std::vector<SgNode *> read_refs;
@@ -470,27 +545,21 @@ namespace
             }
         }
 
-        // Deal with write dependency
+        // Deal with write dependence
         for (auto w_array_ref_it = write_array_refs.begin(); w_array_ref_it != write_array_refs.end(); ++w_array_ref_it)
         {
             SgPntrArrRefExp *w_array_ref = *w_array_ref_it;
             if (debug)
             {
                 std::cout << "Analyzing Write " << to_string(w_array_ref) << std::endl;
+                get_array_name_from_ref(w_array_ref, true, 1);
             }
 
-            SgForStatement *w_array_ref_enclosing_for_stmt = get_enclosing_for_stmt(w_array_ref);
             // Check w_array_ref is inside a for loop
-            if (w_array_ref_enclosing_for_stmt == nullptr)
+            if (get_enclosing_for_stmt(w_array_ref) == nullptr)
                 continue;
 
-            // Deal with write array ref that's at the current for stmt scope
-            // if (enclosing_for_stmt != for_stmt)
-            //     continue;
-
-            SgInitializedName *w_array_name = get_array_from_ref(w_array_ref, debug, 1);
-
-            // Deal with write-write dependency
+            // Deal with write-write dependence
             for (auto target_w_array_ref_it = w_array_ref_it + 1; target_w_array_ref_it != write_array_refs.end(); ++target_w_array_ref_it)
             {
                 SgPntrArrRefExp *target_w_array_ref = *target_w_array_ref_it;
@@ -500,31 +569,10 @@ namespace
                     std::cout << indent_str << "Write Target " << to_string(target_w_array_ref) << std::endl;
                 }
 
-                // Find write-write dependency on the same array name
-                SgInitializedName *target_w_array_name = get_array_from_ref(target_w_array_ref, debug, 2);
-                if (target_w_array_name != w_array_name)
-                    continue;
-                if (debug)
-                {
-                    const std::string indent_str = get_indent(3);
-                    std::cout << indent_str << "Name Matching.." << std::endl;
-                }
-
-                SgForStatement *target_w_array_ref_enclosing_for_stmt = get_enclosing_for_stmt(target_w_array_ref);
-                // Check w_array_ref is inside a for loop
-                if (target_w_array_ref_enclosing_for_stmt == nullptr)
-                    continue;
-
-                // Find common ancestor
-                SgForStatement *ancestor_for_stmt = find_common_ancestor_for_stmt(w_array_ref_enclosing_for_stmt, target_w_array_ref_enclosing_for_stmt, scope_stmt);
-                if (debug)
-                {
-                    std::cout << get_indent(3) << "Common Ancestor.." << std::endl;
-                    std::cout << get_indent(4) << "for_stmt: " << to_string(ancestor_for_stmt) << std::endl;
-                }
+                std::optional<raw_ddtp> res = is_potential_dependence_target_pair(w_array_ref, target_w_array_ref, scope_stmt, debug, 2);
             }
 
-            // Deal with write-read dependency
+            // Deal with write-read dependence
         }
     }
 
@@ -563,8 +611,8 @@ namespace
             // SageInterface::printAST(current_loop);
         }
 
-        // Determine dependency check targets
-        determine_dependency_check_targets(body, induction_variables, analyzable_loops);
+        // Determine dependence check targets
+        determine_potential_dependence_targets_of_scope(body, induction_variables, analyzable_loops);
     }
 
 }
