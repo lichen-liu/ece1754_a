@@ -12,6 +12,7 @@
 #include "rose.h"
 #include <iostream>
 #include <unordered_map>
+#include <unordered_set>
 #include <algorithm>
 
 namespace
@@ -180,7 +181,12 @@ namespace
         // }
     }
 
-    std::string get_SgNode_string(SgNode *node)
+    std::string get_indent(int indent)
+    {
+        return std::string(2 * indent, ' ');
+    }
+
+    std::string to_string(SgNode *node)
     {
         std::ostringstream ss;
         std::string prefix;
@@ -197,7 +203,7 @@ namespace
         std::cout << std::endl;
     }
 
-    SgExpression *get_array_from_ref(SgPntrArrRefExp *array_ref, bool debug = false, int indent = 0)
+    SgInitializedName *get_array_from_ref(SgPntrArrRefExp *array_ref, bool debug = false, int indent = 0)
     {
         SgExpression *array_name_exp = nullptr;
         std::unique_ptr<std::vector<SgExpression *>> array_ref_subscripts = std::make_unique<std::vector<SgExpression *>>();
@@ -205,18 +211,97 @@ namespace
         // What a stupid API??? You only need to modify a vector but why a double pointer?
         SageInterface::isArrayReference(array_ref, &array_name_exp, &array_ref_subscripts_p);
 
+        SgInitializedName *array_name = SageInterface::convertRefToInitializedName(array_name_exp);
+        ROSE_ASSERT(array_name);
+
         if (debug)
         {
-            const std::string indent_str(2 * indent, ' ');
-            const std::string inner_indent_str(2 * (1 + indent), ' ');
-            std::cout << indent_str << "array: " << get_SgNode_string(array_name_exp) << std::endl;
+            const std::string indent_str = get_indent(indent);
+            const std::string inner_indent_str = get_indent(1 + indent);
+            std::cout << indent_str << "array_name: " << to_string(array_name) << std::endl;
+            std::cout << indent_str << "array: " << to_string(array_name_exp) << std::endl;
             std::cout << indent_str << "subscript:" << std::endl;
             for (SgExpression *s : *array_ref_subscripts)
             {
-                std::cout << inner_indent_str << get_SgNode_string(s) << std::endl;
+                std::cout << inner_indent_str << to_string(s) << std::endl;
             }
         }
-        return array_name_exp;
+        return array_name;
+    }
+
+    SgForStatement *find_common_ancestor_for_stmt(SgForStatement *n1, SgForStatement *n2, SgScopeStatement *nt, bool debug = false)
+    {
+        if (n1 == n2)
+            return n1;
+        if (SageInterface::isAncestor(n1, n2))
+            return n1;
+        if (SageInterface::isAncestor(n2, n1))
+            return n2;
+
+        auto ancestor_visitor = [nt, debug](SgForStatement *from, std::function<bool(SgForStatement *)> worker)
+        {
+            if (debug)
+            {
+                std::cout << "ancestor traversal: " << to_string(from) << std::endl;
+            }
+            SgStatement *cur_node = SageInterface::getEnclosingStatement(from);
+            while (cur_node != nt)
+            {
+                if (debug)
+                {
+                    std::cout << "  " << to_string(cur_node) << std::endl;
+                }
+
+                if (SgScopeStatement *enclosing_loop_stmt = SageInterface::findEnclosingLoop(cur_node))
+                {
+                    if (SgForStatement *enclosing_for_stmt = isSgForStatement(enclosing_loop_stmt))
+                    {
+                        if (!worker(enclosing_for_stmt))
+                        {
+                            return;
+                        }
+                    }
+                }
+
+                ROSE_ASSERT(SageInterface::getEnclosingScope(cur_node) != cur_node);
+                cur_node = SageInterface::getEnclosingScope(cur_node);
+            }
+        };
+
+        // Do a tree traversal upwards to find all n1 ancestors
+        std::unordered_set<SgForStatement *> n1_ancestors;
+        ancestor_visitor(n1, [&n1_ancestors](SgForStatement *enclosing_for_stmt)
+                         {
+                             n1_ancestors.insert(enclosing_for_stmt);
+                             return true;
+                         });
+
+        // Do a tree traversal upwards to find all n2 ancestors
+        SgForStatement *common_ancestor = nullptr;
+        ancestor_visitor(n2, [&n1_ancestors, &common_ancestor](SgForStatement *enclosing_for_stmt)
+                         {
+                             if (n1_ancestors.count(enclosing_for_stmt))
+                             {
+                                 common_ancestor = enclosing_for_stmt;
+                                 // early exit as soon as we hit an n1 ancestor
+                                 return false;
+                             }
+                             return true;
+                         });
+
+        return common_ancestor;
+    }
+
+    SgForStatement *get_enclosing_for_stmt(SgPntrArrRefExp *array_ref)
+    {
+        SgStatement *enclosing_stmt = SageInterface::getEnclosingStatement(array_ref);
+        SgScopeStatement *enclosing_loop_stmt = SageInterface::findEnclosingLoop(enclosing_stmt);
+        if (enclosing_loop_stmt)
+        {
+            return isSgForStatement(enclosing_loop_stmt);
+        }
+
+        return nullptr;
     }
 
     SgInitializedName *is_loop_analyzable(SgNode *for_loop_node, bool debug = true, bool verbose = false)
@@ -323,13 +408,13 @@ namespace
                         std::cout << "      is_induction_variable_unmodified=true" << std::endl;
                     }
 
-                    std::cout << "Analyzable! " << get_SgNode_string(for_loop_node) << std::endl;
+                    std::cout << "Analyzable! " << to_string(for_loop_node) << std::endl;
                     return ivar;
                 }
             }
         }
 
-        std::cout << "Not analyzable! " << get_SgNode_string(for_loop_node) << std::endl;
+        std::cout << "Not analyzable! " << to_string(for_loop_node) << std::endl;
         return nullptr;
     }
 
@@ -362,7 +447,7 @@ namespace
         {
             std::cout << std::endl;
             print_ast(scope_stmt);
-            std::cout << "In scope: " << get_SgNode_string(scope_stmt) << std::endl;
+            std::cout << "In scope: " << to_string(scope_stmt) << std::endl;
             std::cout << "read_array_refs:" << std::endl;
             for (auto r : read_array_refs)
             {
@@ -381,30 +466,52 @@ namespace
             SgPntrArrRefExp *w_array_ref = *w_array_ref_it;
             if (debug)
             {
-                std::cout << "Analyzing W [" << get_SgNode_string(w_array_ref) << "]" << std::endl;
+                std::cout << "Analyzing Write " << to_string(w_array_ref) << std::endl;
             }
-            SgStatement *enclosing_stmt = SageInterface::getEnclosingStatement(w_array_ref);
-            SgScopeStatement *enclosing_loop_stmt = SageInterface::findEnclosingLoop(enclosing_stmt);
-            SgForStatement *enclosing_for_stmt = isSgForStatement(enclosing_loop_stmt);
 
-            // TODO: check analyzable_loops
+            SgForStatement *w_array_ref_enclosing_for_stmt = get_enclosing_for_stmt(w_array_ref);
+            // Check w_array_ref is inside a for loop
+            if (w_array_ref_enclosing_for_stmt == nullptr)
+                continue;
 
             // Deal with write array ref that's at the current for stmt scope
             // if (enclosing_for_stmt != for_stmt)
             //     continue;
 
-            SgExpression *w_array_name_exp = get_array_from_ref(w_array_ref, debug, 1);
+            SgInitializedName *w_array_name = get_array_from_ref(w_array_ref, debug, 1);
 
-            if (debug)
-            {
-                std::cout << "    Write-Write:" << std::endl;
-            }
             // Deal with write-write dependency
             for (auto target_w_array_ref_it = w_array_ref_it + 1; target_w_array_ref_it != write_array_refs.end(); ++target_w_array_ref_it)
             {
                 SgPntrArrRefExp *target_w_array_ref = *target_w_array_ref_it;
+                if (debug)
+                {
+                    const std::string indent_str = get_indent(1);
+                    std::cout << indent_str << "Write Target " << to_string(target_w_array_ref) << std::endl;
+                }
 
-                SgExpression *target_w_array_name_exp = get_array_from_ref(target_w_array_ref, debug, 3);
+                // Find write-write dependency on the same array name
+                SgInitializedName *target_w_array_name = get_array_from_ref(target_w_array_ref, debug, 2);
+                if (target_w_array_name != w_array_name)
+                    continue;
+                if (debug)
+                {
+                    const std::string indent_str = get_indent(3);
+                    std::cout << indent_str << "Name Matching.." << std::endl;
+                }
+
+                SgForStatement *target_w_array_ref_enclosing_for_stmt = get_enclosing_for_stmt(target_w_array_ref);
+                // Check w_array_ref is inside a for loop
+                if (target_w_array_ref_enclosing_for_stmt == nullptr)
+                    continue;
+
+                // Find common ancestor
+                SgForStatement *ancestor_for_stmt = find_common_ancestor_for_stmt(w_array_ref_enclosing_for_stmt, target_w_array_ref_enclosing_for_stmt, scope_stmt);
+                if (debug)
+                {
+                    const std::string indent_str = get_indent(3);
+                    std::cout << indent_str << "Ancestor for_stmt: " << to_string(ancestor_for_stmt) << std::endl;
+                }
             }
 
             // Deal with write-read dependency
