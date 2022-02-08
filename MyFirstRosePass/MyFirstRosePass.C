@@ -352,6 +352,7 @@ namespace
 
         if (debug)
         {
+            std::cout << to_string(for_loop_node) << std::endl;
             std::cout << for_loop_node->unparseToString() << std::endl;
         }
 
@@ -372,16 +373,17 @@ namespace
 
         if (debug)
         {
-            std::cout << "  var:" << std::endl;
+            const std::string indent = get_indent(1);
+            std::cout << indent << "var:" << std::endl;
             SageInterface::printAST(ivar);
 
-            std::cout << "  lb:" << std::endl;
+            std::cout << indent << "lb:" << std::endl;
             SageInterface::printAST(lb);
 
-            std::cout << "  ub:" << std::endl;
+            std::cout << indent << "ub:" << std::endl;
             SageInterface::printAST(ub);
 
-            std::cout << "  step:" << std::endl;
+            std::cout << indent << "step:" << std::endl;
             SageInterface::printAST(step);
         }
 
@@ -392,7 +394,7 @@ namespace
         {
             if (debug)
             {
-                std::cout << "  is_canonical=True" << std::endl;
+                std::cout << get_indent(1) << "is_canonical=True" << std::endl;
             }
 
             // We want to check whether increment step c is a compile time constant.
@@ -405,11 +407,12 @@ namespace
             {
                 if (debug)
                 {
-                    std::cout << "    is_increment_step_constexpr=True, step_value=" << step_value->get_value() << std::endl;
+                    const std::string indent = get_indent(2);
+                    std::cout << indent << "is_increment_step_constexpr=True, step_value=" << step_value->get_value() << std::endl;
 
                     if (verbose)
                     {
-                        std::cout << "    body:" << std::endl;
+                        std::cout << indent << "body:" << std::endl;
                         SageInterface::printAST(body);
                     }
                 }
@@ -421,15 +424,16 @@ namespace
                 SageInterface::collectReadWriteVariables(body, read_vars, write_vars);
                 if (debug)
                 {
+                    const std::string indent = get_indent(2);
                     if (verbose)
                     {
-                        std::cout << "    body read:" << std::endl;
+                        std::cout << indent << "body read:" << std::endl;
                         for (auto r : read_vars)
                         {
                             SageInterface::printAST(r);
                         }
                     }
-                    std::cout << "    body write:" << std::endl;
+                    std::cout << indent << "body write:" << std::endl;
                     for (auto w : write_vars)
                     {
                         SageInterface::printAST(w);
@@ -441,7 +445,7 @@ namespace
                 {
                     if (debug)
                     {
-                        std::cout << "      is_induction_variable_unmodified=true" << std::endl;
+                        std::cout << get_indent(3) << "is_induction_variable_unmodified=true" << std::endl;
                     }
 
                     std::cout << "Analyzable! " << to_string(for_loop_node) << std::endl;
@@ -565,14 +569,22 @@ namespace
                 SgPntrArrRefExp *target_w_array_ref = *target_w_array_ref_it;
                 if (debug)
                 {
-                    const std::string indent_str = get_indent(1);
-                    std::cout << indent_str << "Write Target " << to_string(target_w_array_ref) << std::endl;
+                    std::cout << get_indent(1) << "Write Target " << to_string(target_w_array_ref) << std::endl;
                 }
 
                 std::optional<raw_ddtp> res = is_potential_dependence_target_pair(w_array_ref, target_w_array_ref, scope_stmt, debug, 2);
             }
 
             // Deal with write-read dependence
+            for (SgPntrArrRefExp *target_r_array_ref : read_array_refs)
+            {
+                if (debug)
+                {
+                    std::cout << get_indent(1) << "Read Target " << to_string(target_r_array_ref) << std::endl;
+                }
+
+                std::optional<raw_ddtp> res = is_potential_dependence_target_pair(w_array_ref, target_r_array_ref, scope_stmt, debug, 2);
+            }
         }
     }
 
