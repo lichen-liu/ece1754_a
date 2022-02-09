@@ -1,6 +1,6 @@
 
 
-# Determine Analyzable Loop
+## Determine Analyzable Loop
 An analyzable loop has the following definition.
 > A for loop that has an induction variable (call it `i`) with:<br>
 > 1. one or more initialization statements
@@ -25,7 +25,7 @@ Next, the increment step `c`, which is acquired from the `SageInterface::isCanon
 
 Lastly, a list of all variables that have read and/or write references is retrieved from the `SageInterface::collectReadWriteVariables` API. The candidate induction variable, which is also acquired from the the `SageInterface::isCanonicalForLoop` API, is checked against this list to find any write-references inside the loop.
 
-# Table of Data Dependence Testing Problem Pairs
+## Table of Data Dependence Testing Problem Pairs
 | Test | Type | Dependence Entry |
 | ---- | ---- | ---------------- |
 | **testA.c** | _WR_ | `out[i][j] : out[i][j] : t`<br>`in[i][j] : in[i - 1][j] : t`<br>`in[i][j] : in[i + 1][j] : t`<br>`in[i][j] : in[i][j - 1] : t`<br>`in[i][j] : in[i][j + 1] : t` |
