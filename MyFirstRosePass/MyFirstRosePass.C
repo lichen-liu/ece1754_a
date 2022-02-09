@@ -705,8 +705,11 @@ namespace
         // Determine dependence check targets
         DDTPCollection ddtpc = determine_potential_dependence_targets_of_scope(body, analyzable_loops, debug);
         std::cout << std::endl;
+        std::cout << "========================== BEGIN ========================" << std::endl;
+        std::cout << to_string(defn) << std::endl;
         std::cout << "Data Dependence Testing Pair Collection" << std::endl;
-        std::cout << ddtpc << std::endl;
+        std::cout << ddtpc;
+        std::cout << "==========================  END  ========================" << std::endl;
     }
 
 }
