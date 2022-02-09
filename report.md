@@ -1,4 +1,4 @@
-
+# ECE1754 Assignment Report
 
 ## Determine Analyzable Loop
 An analyzable loop has the following definition.
@@ -8,9 +8,9 @@ An analyzable loop has the following definition.
 > 3. a single increment expression in the form `i=i+c`, `i=i-c`, `++i`, `--i`, `i++` or `++i`, where `c` is a compile-time constant 
 > 4. the value of `i` is not changed in the loop
 
-Therefore, a combination of techniques is applied to check whether a loop is analyzable and find its induction variable if true.
+A combination of steps are applied to check whether a loop is analyzable and find its induction variable if true.
 
-At a high level, every loop, regardless it is nested or not, in the source file is checked separately. Every loop is analyzed by `SageInterface::isCanonicalForLoop` first. Then the step of the for loop is checked for whether it is a compile-time constant. Lastly, the candidate induction variable is examined for any write-reference to ensure its constness in the loop.
+At a high level, every loop, regardless whether it is nested or not, in the source file is checked separately. Every loop is analyzed by `SageInterface::isCanonicalForLoop` first. Then the step of the for loop is checked for whether it is a compile-time constant. Lastly, the candidate induction variable is examined for any write-reference to ensure its constness in the loop.
 
 The `SageInterface::isCanonicalForLoop` API can check whether a for loop is canonical. A canonical for loop has the following definition.
 > A canonical form is defined as:
@@ -36,3 +36,6 @@ Lastly, a list of all variables that have read and/or write references is retrie
 |             | _WW_ | `eps[index] : eps[zoneset[i]] : i`<br>`eps[index1] : eps[index2] : i` |
 | **testF.c** | _WR_ | `c[i][j] : c[i][j] : i, j, k` |
 | **testG.c** | _WR_ | `a[i] : a[i] : i`<br>`a[i] : a[i] : i`|
+
+## Github Repo
+https://github.com/lichen-liu/ece1754_a
