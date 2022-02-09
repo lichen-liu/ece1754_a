@@ -25,7 +25,10 @@ Next, the increment step `c`, which is acquired from the `SageInterface::isCanon
 
 Lastly, a list of all variables that have read and/or write references is retrieved from the `SageInterface::collectReadWriteVariables` API. The candidate induction variable, which is also acquired from the the `SageInterface::isCanonicalForLoop` API, is checked against this list to find any write-references inside the loop.
 
-## Table of Data Dependence Testing Problem Pairs
+## Find Data Dependence Testing Pairs
+Finding data denpedence testing pairs is performed at the `SgScopeStatement` level. These scope inputs must not overlap if the source file is partitioned into multiple scopes such as from multiple function definitions. Then, all possible pairs of write-write and write-read array references `SgPntrArrRefExp` are constructed in a way, such that both references refer to the same name `SgInitializedName`. At a high level, finding the common surrounding loop is equivalent of finding the closest common ancestor for loop (`SgForStatement`) for two array references, the traversal terminates when it finds such common ancestor or it hits the input `SgScopeStatement`. Finding the common surrounding loop indices is essentially traversing from the closest common ancestor for loop upwards, and translating the encountered `SgForStatement` node into the corresponding induction variable if it is analyzable. The traversal terminates either when the encountered `SgForStatement` node is not analyzable or it hits the input `SgScopeStatement`.
+
+## Table of Data Dependence Testing Pairs
 | Test | Type | Dependence Entry |
 | ---- | ---- | ---------------- |
 | **testA.c** | _WR_ | `out[i][j] : out[i][j] : t`<br>`in[i][j] : in[i - 1][j] : t`<br>`in[i][j] : in[i + 1][j] : t`<br>`in[i][j] : in[i][j - 1] : t`<br>`in[i][j] : in[i][j + 1] : t` |
