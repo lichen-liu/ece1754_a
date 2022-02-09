@@ -500,7 +500,7 @@ namespace
         return nullptr;
     }
 
-    DDTP formulate_ddtp(const RawDDTP &raw_ddtp, const std::unordered_map<SgForStatement *, SgInitializedName *> &analyzable_loops)
+    std::optional<DDTP> formulate_ddtp(const RawDDTP &raw_ddtp, const std::unordered_map<SgForStatement *, SgInitializedName *> &analyzable_loops)
     {
         std::vector<SgInitializedName *> common_induction_vars;
 
@@ -520,7 +520,12 @@ namespace
         // Reverse common induction vars from outer to inner
         std::reverse(common_induction_vars.begin(), common_induction_vars.end());
 
-        return {raw_ddtp.w_array_ref, raw_ddtp.target_array_ref, std::move(common_induction_vars)};
+        if (common_induction_vars.empty())
+        {
+            return std::nullopt;
+        }
+
+        return DDTP{raw_ddtp.w_array_ref, raw_ddtp.target_array_ref, std::move(common_induction_vars)};
     }
 
     std::optional<RawDDTP> is_potential_dependence_target_pair(
@@ -641,12 +646,14 @@ namespace
 
                 if (std::optional<RawDDTP> res = is_potential_dependence_target_pair(w_array_ref, target_w_array_ref, scope_stmt, debug, 2))
                 {
-                    DDTP ddtp = formulate_ddtp(*res, analyzable_loops);
-                    if (debug)
+                    if (std::optional<DDTP> ddtp_opt = formulate_ddtp(*res, analyzable_loops))
                     {
-                        std::cout << get_indent(1) << ddtp << std::endl;
+                        if (debug)
+                        {
+                            std::cout << get_indent(1) << *ddtp_opt << std::endl;
+                        }
+                        ww_ddtps.emplace_back(std::move(*ddtp_opt));
                     }
-                    ww_ddtps.emplace_back(std::move(ddtp));
                 }
             }
 
@@ -660,12 +667,14 @@ namespace
 
                 if (std::optional<RawDDTP> res = is_potential_dependence_target_pair(w_array_ref, target_r_array_ref, scope_stmt, debug, 2))
                 {
-                    DDTP ddtp = formulate_ddtp(*res, analyzable_loops);
-                    if (debug)
+                    if (std::optional<DDTP> ddtp_opt = formulate_ddtp(*res, analyzable_loops))
                     {
-                        std::cout << get_indent(1) << ddtp << std::endl;
+                        if (debug)
+                        {
+                            std::cout << get_indent(1) << *ddtp_opt << std::endl;
+                        }
+                        wr_ddtps.emplace_back(std::move(*ddtp_opt));
                     }
-                    wr_ddtps.emplace_back(std::move(ddtp));
                 }
             }
         }
