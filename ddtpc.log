@@ -1,0 +1,94 @@
+Handwritten:
+
+testA.c
+write ref : read ref : common surrounding loop indices
+out[i][j] : out[i][j] : t
+in[i][j] : in[i - 1][j] : t
+in[i][j] : in[i + 1][j] : t
+in[i][j] : in[i][j - 1] : t
+in[i][j] : in[i][j + 1] : t
+write ref : write ref : common surrounding loop indices
+
+testB.c
+write ref : read ref : common surrounding loop indices
+a[i][j] : a[i - 1][j] : t, i, j
+a[i][j] : a[i + 1][j] : t, i, j
+a[i][j] : a[i][j - 1] : t, i, j
+a[i][j] : a[i][j + 1] : t, i, j
+write ref : write ref : common surrounding loop indices
+
+testC.c
+write ref : read ref : common surrounding loop indices
+b[i + 1][j + k + 1][k + 1] : b[i][j][k] : k, i, j
+write ref : write ref : common surrounding loop indices
+
+testD.c
+write ref : read ref : common surrounding loop indices
+a[i + 1] : a[i] : i
+write ref : write ref : common surrounding loop indices
+
+testE.c
+write ref : read ref : common surrounding loop indices
+b[i][index] : b[i - 1][index - 1] : i, j
+write ref : write ref : common surrounding loop indices
+eps[index] : eps[zoneset[i]] : i
+eps[index1] : eps[index2] : i
+
+testF.c
+write ref : read ref : common surrounding loop indices
+c[i][j] : c[i][j] : i, j, k
+write ref : write ref : common surrounding loop indices
+
+testG.c
+write ref : read ref : common surrounding loop indices
+a[i] : a[i] : i
+a[i] : a[i] : i
+write ref : write ref : common surrounding loop indices
+
+
+Generated:
+
+testA.c
+write ref : read ref : common surrounding loop indices
+out[i][j] : out[i][j] : t
+in[i][j] : in[i - 1][j] : t
+in[i][j] : in[i + 1][j] : t
+in[i][j] : in[i][j - 1] : t
+in[i][j] : in[i][j + 1] : t
+write ref : write ref : common surrounding loop indices
+
+testB.c
+write ref : read ref : common surrounding loop indices
+a[i][j] : a[i - 1][j] : t, i, j
+a[i][j] : a[i + 1][j] : t, i, j
+a[i][j] : a[i][j - 1] : t, i, j
+a[i][j] : a[i][j + 1] : t, i, j
+write ref : write ref : common surrounding loop indices
+
+testC.c
+write ref : read ref : common surrounding loop indices
+b[i + 1][j + k + 1][k + 1] : b[i][j][k] : k, i, j
+write ref : write ref : common surrounding loop indices
+
+testD.c
+write ref : read ref : common surrounding loop indices
+a[i + 1] : a[i] : i
+write ref : write ref : common surrounding loop indices
+
+testE.c
+write ref : read ref : common surrounding loop indices
+b[i][index] : b[i - 1][index - 1] : i, j
+write ref : write ref : common surrounding loop indices
+eps[index] : eps[zoneset[i]] : i
+eps[index1] : eps[index2] : i
+
+testF.c
+write ref : read ref : common surrounding loop indices
+c[i][j] : c[i][j] : i, j, k
+write ref : write ref : common surrounding loop indices
+
+testG.c
+write ref : read ref : common surrounding loop indices
+a[i] : a[i] : i
+a[i] : a[i] : i
+write ref : write ref : common surrounding loop indices
